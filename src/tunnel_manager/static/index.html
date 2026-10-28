@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tunnel Manager</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // apply the theme before first paint
+    try {
+      const t = localStorage.getItem("tm-theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="favicon.svg" alt="" width="32" height="32">
+      <span>Tunnel Manager</span>
+    </div>
+    <div class="pills" id="pills" aria-live="polite"></div>
+    <label class="search">
+      <span class="search-icon" data-icon="search"></span>
+      <input id="search" type="search" placeholder="Search tunnels, hosts, ports…" autocomplete="off" spellcheck="false">
+      <kbd>/</kbd>
+    </label>
+    <div class="top-actions">
+      <button class="btn primary" id="btn-new" data-tip="New tunnel (n)" data-tip-pos="bottom"><span data-icon="plus"></span><span class="label">New tunnel</span></button>
+      <button class="icon-btn" id="btn-notify" data-tip="Browser notifications" data-tip-pos="bottom"><span data-icon="bell-off"></span></button>
+      <button class="icon-btn" id="btn-theme" data-tip="Theme" data-tip-pos="bottom"><span data-icon="monitor"></span></button>
+      <button class="icon-btn" id="btn-settings" data-tip="Settings" data-tip-pos="bottom-end"><span data-icon="settings"></span></button>
+    </div>
+  </header>
+
+  <div class="banner" id="offline-banner" hidden>
+    <span data-icon="wifi-off"></span>
+    <span>You're offline. Keep-alive tunnels will reconnect automatically when the network is back.</span>
+  </div>
+  <div class="banner error" id="conn-banner" hidden>
+    <span data-icon="triangle-alert"></span>
+    <span>Lost connection to the manager. Retrying… (is <code>tunnel-manager</code> still running?)</span>
+  </div>
+
+  <main>
+    <section class="section" id="sec-fav">
+      <div class="section-head">
+        <h2><span data-icon="star"></span> Favourites <span class="count" id="fav-count"></span></h2>
+        <span class="hint">Drag <span data-icon="grip-vertical"></span> to reorder · drop history items here to pin them</span>
+      </div>
+      <div class="list" id="fav-list" data-list="fav"></div>
+      <div class="empty" id="fav-empty" hidden>
+        No favourites yet. Click <span data-icon="star"></span> on a tunnel, or drag one here.
+      </div>
+    </section>
+
+    <section class="section" id="sec-hist">
+      <div class="section-head">
+        <h2><span data-icon="history"></span> History <span class="count" id="hist-count"></span></h2>
+        <div class="section-tools">
+          <label class="select-label">Sort
+            <select id="sort">
+              <option value="recent">Recently used</option>
+              <option value="name">Name</option>
+              <option value="host">Host</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="list" id="hist-list" data-list="hist"></div>
+      <div class="empty" id="hist-empty" hidden>
+        Nothing here yet. Create a tunnel with <b>New tunnel</b>, or import your shell history in <b>Settings</b>.
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="footer-info"></span>
+  </footer>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <dialog class="modal" id="modal"></dialog>
+
+  <script src="vendor/Sortable.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
