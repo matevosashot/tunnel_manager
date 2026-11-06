@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from . import __version__, history, paths, service, sshconfig
+from .favicon import EXT_TYPES, FaviconCache
 from .models import Tunnel
 from .sshcmd import display_command, tilde_warning
 from .store import Store
@@ -85,6 +86,7 @@ def create_app(
     store.on_change(bus.publish)
     supervisor.on_change(bus.publish)
     pool = ThreadPoolExecutor(max_workers=8)
+    favicons = FaviconCache(on_update=bus.publish)
 
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"} | set(extra_hosts or [])
     allowed_origins = {f"http://{h}" for h in allowed_hosts}
@@ -108,8 +110,13 @@ def create_app(
         d = t.model_dump()
         d["runtime"] = snap.get(t.id) or {"status": "stopped"}
         d["command"] = display_command(t)
+        d["auto_name"] = t.auto_name()
         d["open"] = t.default_open_url()
         d["warning"] = tilde_warning(t)
+        d["favicon"] = favicons.version(t.id)
+        if (d["runtime"].get("status") == "up" and store.settings.fetch_favicons
+                and not demo and favicons.wants(t)):
+            favicons.fetch_async(t, pool.submit)
         return d
 
     def state() -> dict:
@@ -198,6 +205,8 @@ def create_app(
         conn_changed = any(
             getattr(before, f) != getattr(after, f) for f in CONNECTION_FIELDS
         )
+        if conn_changed or before.open_url != after.open_url:
+            favicons.forget(tunnel_id)
         if active and conn_changed:
             pool.submit(supervisor.restart, tunnel_id)
         elif active and before.keep_alive and not after.keep_alive and rt.get("status") in ("retrying", "offline"):
@@ -208,6 +217,7 @@ def create_app(
     def delete_tunnel(tunnel_id: str):
         get_or_404(tunnel_id)
         supervisor.forget(tunnel_id)
+        favicons.forget(tunnel_id)
         store.delete(tunnel_id)
         return {"ok": True}
 
@@ -234,6 +244,19 @@ def create_app(
         except OSError as e:
             raise HTTPException(500, f"could not open {url}: {e}")
         return {"ok": True, "url": url}
+
+    @app.get("/api/tunnels/{tunnel_id}/favicon")
+    def tunnel_favicon(tunnel_id: str):
+        get_or_404(tunnel_id)
+        p = favicons.path(tunnel_id)
+        if p is None:
+            raise HTTPException(404, "no favicon")
+        return FileResponse(p, media_type=EXT_TYPES[p.suffix[1:]], headers={
+            "Cache-Control": "max-age=86400",
+            # icons come from arbitrary web apps: never let one run script here
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        })
 
     @app.get("/api/tunnels/{tunnel_id}/logs")
     def tunnel_logs(tunnel_id: str, offset: int = -1, limit: int = 64_000):
@@ -278,6 +301,7 @@ def create_app(
         dup = store.find_duplicate(t, exclude_id=editing)
         if dup:
             warnings.append(f"Identical to the existing tunnel “{dup.name}” — saving will reuse it.")
+        duplicate_of = {"id": dup.id, "name": dup.name} if dup else None
         own_pid = supervisor.snapshot().get(editing or "", {}).get("pid")
         for bind, p in t.local_ports():
             if not port_free(bind, p):
@@ -292,7 +316,8 @@ def create_app(
             if clash:
                 warnings.append(f"Port {', '.join(map(str, sorted(clash)))} is also used by “{other.name}”.")
                 break
-        return {"ok": True, "name": t.name, "command": display_command(t), "open": t.default_open_url(), "warnings": warnings}
+        return {"ok": True, "name": t.name, "command": display_command(t), "open": t.default_open_url(),
+                "warnings": warnings, "duplicate_of": duplicate_of}
 
     # ------------------------------------------------------------ ssh info
 

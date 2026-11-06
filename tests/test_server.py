@@ -87,3 +87,18 @@ def test_logs_endpoint(client, isolated_home):
     r = client.get(f"/api/tunnels/{tid}/logs").json()
     assert r["text"].endswith("line two\n") and r["offset"] == 18
     assert client.get(f"/api/tunnels/{tid}/logs?offset=18").json()["text"] == ""
+
+
+def test_duplicate_flow(client):
+    """The editor's duplicate mode: an unchanged copy is flagged, a changed one is created."""
+    orig = _new(client, name="web", favorite=True).json()
+    body = {"host": "gpu", "forwards": [{"type": "L", "listen_port": 18080, "target_host": "localhost", "target_port": 80}]}
+    r = client.post("/api/preview", json=body, headers=H).json()
+    assert r["duplicate_of"] == {"id": orig["id"], "name": "web"}
+    body["forwards"][0]["listen_port"] = 18081
+    assert client.post("/api/preview", json=body, headers=H).json()["duplicate_of"] is None
+    copy = client.post("/api/tunnels", json=dict(body, name="web copy", favorite=True), headers=H).json()
+    assert copy["created"] and copy["id"] != orig["id"]
+    tunnels = {t["id"]: t for t in client.get("/api/state").json()["tunnels"]}
+    assert tunnels[orig["id"]]["forwards"][0]["listen_port"] == 18080  # original untouched
+    assert tunnels[copy["id"]]["favorite"] and tunnels[copy["id"]]["auto_name"] == "gpu :18081→80"

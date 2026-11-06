@@ -249,6 +249,11 @@ select {
 /* name, host and forwards share one line when there is room, wrapping otherwise */
 .main { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
 .title-line { display: flex; align-items: center; gap: 12px; min-width: 0; max-width: 100%; }
+.title-line .favi { margin-right: -3px; }
+.favi { flex: none; width: 22px; height: 22px; display: grid; place-items: center; color: var(--faint); opacity: .7; }
+.favi.has { opacity: 1; }
+.favi img { width: 22px; height: 22px; object-fit: contain; border-radius: 4px; }
+.favi .icon { width: 19px; height: 19px; }
 .name { flex: 0 0 auto; max-width: 100%; font-weight: 620; font-size: 17.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .host {
   /* the host shortens (with an ellipsis) before the name does */
@@ -292,6 +297,27 @@ select {
 
 .actions { display: flex; align-items: center; gap: 3px; }
 .actions .sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+
+.icon-btn.more.on { color: var(--text); background: var(--surface-3); }
+.icon-btn.more.on::after { display: none; }
+
+/* ---------------------------------------------------------------- ⋯ menu */
+.menu {
+  position: absolute; z-index: 60; min-width: 230px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg);
+  animation: pop .12s ease;
+}
+.menu-item {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 12px; border: 0; border-radius: 8px;
+  background: transparent; cursor: pointer; text-align: left; font-size: 15px; font-weight: 520; color: var(--text);
+}
+.menu-item .icon { color: var(--muted); }
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.menu-item.danger, .menu-item.danger .icon { color: var(--red); }
+.menu-item.danger:hover, .menu-item.danger:focus-visible { background: var(--red-weak); }
+.menu-sep { height: 1px; margin: 5px 6px; background: var(--border); }
+.callout.info { background: var(--accent-weak); color: var(--accent); }
+.callout.info div { color: var(--text); }
 
 /* ---------------------------------------------------------------- details drawer */
 .details { border-top: 1px solid var(--border); padding: 16px 18px 18px 60px; display: grid; gap: 16px; }

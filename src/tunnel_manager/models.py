@@ -287,6 +287,7 @@ def _short_forward(f: Forward) -> str:
 
 
 class Settings(BaseModel):
+    fetch_favicons: bool = True
     accept_new_host_keys: bool = False
     server_alive_interval: int = Field(default=10, ge=1, le=600)
     server_alive_count_max: int = Field(default=3, ge=1, le=20)

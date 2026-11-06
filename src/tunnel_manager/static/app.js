@@ -76,6 +76,7 @@ const S = {
   logs: new Map(),        // id -> {offset}
   dragging: false,
   connected: false,
+  menuFor: null,          // id whose ⋯ menu is open
 };
 
 const ACTIVE = new Set(["starting", "up", "retrying", "offline"]);
@@ -212,26 +213,25 @@ function rowHTML(t) {
   const name = S.renaming === t.id
     ? `<input class="rename-input" value="${esc(t.name)}" maxlength="120" aria-label="New name">`
     : `<span class="name" data-act="details" title="${esc(t.name)}">${esc(t.name)}</span>`;
+  const web = /^https?:/i.test(t.open || "");
+  const favi = t.favicon
+    ? `<img src="/api/tunnels/${t.id}/favicon?v=${t.favicon}" alt="" width="22" height="22" loading="lazy">`
+    : icon(web ? "globe" : "network");
   return `
     <div class="grip" data-tip="${t.favorite ? "Drag to reorder" : "Drag to Favourites"}">${icon("grip-vertical")}</div>
     <div class="dot ${st}"></div>
     <div class="main">
-      <div class="title-line">${name}<span class="host">${hostLabel(t)}</span></div>
+      <div class="title-line"><span class="favi${t.favicon ? " has" : ""}">${favi}</span>${name}<span class="host">${hostLabel(t)}</span></div>
       <div class="fwds">${t.forwards.map((f) => fwdChip(f, t)).join("")}</div>
     </div>
     <div class="status">${statusHTML(t)}</div>
     <div class="actions">
       ${btn("power", "power", powerTip, powerCls)}
       ${btn("keep", "heart-pulse", t.keep_alive ? "Keep-alive on: reconnects automatically" : "Keep-alive off", "keep" + (t.keep_alive ? " on" : ""))}
-      ${btn("copy", "copy", "Copy ssh command")}
-      ${btn("details", "scroll-text", S.open.has(t.id) ? "Hide details & log" : "Details & log", S.open.has(t.id) ? "on" : "")}
-      <span class="sep"></span>
-      ${btn("rename", "type", "Rename")}
-      ${btn("edit", "pencil", "Edit")}
       ${btn("star", "star", t.favorite ? "Remove from favourites" : "Add to favourites", "star" + (t.favorite ? " on" : ""))}
-      ${btn("delete", "trash-2", "Delete", "del")}
+      ${btn("menu", "ellipsis", "More actions", "more" + (S.menuFor === t.id ? " on" : ""), false, "top-end")}
       <span class="sep"></span>
-      ${btn("open", "external-link", t.open ? `Open ${t.open}` : "Nothing to open (no -L forward)", "open" + (st === "up" ? " ready" : ""), !t.open, "top-end")}
+      ${btn("open", "external-link", !t.open ? "Nothing to open (no -L forward)" : st === "up" ? `Open ${t.open}` : `Start & open ${t.open}`, "open" + (st === "up" ? " ready" : ""), !t.open, "top-end")}
     </div>`;
 }
 
@@ -315,7 +315,7 @@ function ensureRow(t) {
     c = { el, sig: "", dsig: "" };
     rowCache.set(t.id, c);
   }
-  const sig = JSON.stringify([t.name, t.host, t.user, t.port, t.jump, t.forwards, t.keep_alive, t.favorite, t.open,
+  const sig = JSON.stringify([t.name, t.host, t.user, t.port, t.jump, t.forwards, t.keep_alive, t.favorite, t.open, t.favicon,
     t.runtime, S.renaming === t.id, S.open.has(t.id), S.hosts.get(t.host)?.hostname, t.last_used_at]);
   // never re-render a row while its name is being edited
   const editingName = S.renaming === t.id && c.el.querySelector(".rename-input");
@@ -477,9 +477,7 @@ async function act(name, id, el) {
           t.keep_alive ? "" : "It will reconnect automatically after network loss or sleep.", 2600);
         break;
       case "open":
-        if (/^https?:/i.test(t.open)) window.open(t.open, "_blank", "noopener");
-        else await api("POST", `/api/tunnels/${id}/open`);
-        if (t.runtime?.status !== "up") toast("warn", `${t.name} is not running`, "Turn it on first if the page does not load.", 3500);
+        await openTunnel(t);
         break;
       case "copy":
         await navigator.clipboard.writeText(t.command);
@@ -489,11 +487,17 @@ async function act(name, id, el) {
         if (S.open.has(id)) { S.open.delete(id); stopLog(id); } else { S.open.add(id); startLog(id); }
         render();
         break;
+      case "menu":
+        if (S.menuFor === id) closeMenu(); else openMenu(el, t);
+        break;
       case "rename":
         startRename(id);
         break;
       case "edit":
-        openEditor(t);
+        openEditor(t, "edit");
+        break;
+      case "duplicate":
+        openEditor(t, "duplicate");
         break;
       case "star":
         await api("PUT", `/api/tunnels/${id}`, { favorite: !t.favorite });
@@ -505,6 +509,111 @@ async function act(name, id, el) {
   } catch (e) {
     toast("err", e.message);
   }
+}
+
+// ------------------------------------------------------------------ ⋯ menu
+
+const MENU_ITEMS = [
+  { act: "details", icon: "scroll-text", label: (t) => (S.open.has(t.id) ? "Hide details & log" : "Details & log") },
+  { act: "copy", icon: "copy", label: () => "Copy ssh command" },
+  { act: "rename", icon: "type", label: () => "Rename" },
+  { act: "edit", icon: "pencil", label: () => "Edit" },
+  { act: "duplicate", icon: "copy-plus", label: () => "Duplicate…" },
+  null,
+  { act: "delete", icon: "trash-2", label: () => "Delete…", cls: "danger" },
+];
+
+function openMenu(anchor, t) {
+  closeMenu();
+  const m = document.createElement("div");
+  m.className = "menu";
+  m.id = "row-menu";
+  m.setAttribute("role", "menu");
+  m.innerHTML = MENU_ITEMS.map((it) => it
+    ? `<button type="button" class="menu-item ${it.cls || ""}" role="menuitem" data-act="${it.act}">${icon(it.icon)}<span>${esc(it.label(t))}</span></button>`
+    : `<div class="menu-sep" role="separator"></div>`).join("");
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const below = r.bottom + 6 + m.offsetHeight <= window.innerHeight;
+  m.style.top = `${(below ? r.bottom + 6 : r.top - 6 - m.offsetHeight) + window.scrollY}px`;
+  m.style.left = `${Math.max(8, r.right - m.offsetWidth) + window.scrollX}px`;
+  S.menuFor = t.id;
+  anchor.classList.add("on");
+  m.addEventListener("click", (e) => {
+    const b = e.target.closest(".menu-item");
+    if (!b) return;
+    closeMenu();
+    act(b.dataset.act, t.id, b);
+  });
+  m.addEventListener("keydown", (e) => {
+    const items = $$(".menu-item", m);
+    const i = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+    if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+    if (e.key === "Escape") { e.preventDefault(); closeMenu(); anchor.focus(); }
+  });
+  m.querySelector(".menu-item").focus({ preventScroll: true });
+}
+
+function closeMenu() {
+  $("#row-menu")?.remove();
+  if (S.menuFor) $(`.item[data-id="${S.menuFor}"] [data-act="menu"]`)?.classList.remove("on");
+  S.menuFor = null;
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (S.menuFor && !e.target.closest("#row-menu, [data-act='menu']")) closeMenu();
+});
+// the menu is positioned in page coordinates, so it scrolls with its row
+window.addEventListener("resize", () => closeMenu());
+
+// Open the tunnel's URL, starting the tunnel first if it is not up yet.
+async function openTunnel(t) {
+  const web = /^https?:/i.test(t.open);
+  const up = t.runtime?.status === "up";
+  // the tab has to be opened synchronously in the click, or the popup blocker steps in
+  const tab = web ? window.open("", "_blank") : null;
+  if (tab) {
+    tab.opener = null;
+    if (!up) {
+      tab.document.title = `Connecting: ${t.name}`;
+      tab.document.body.innerHTML = `<p style="font:16px -apple-system,system-ui,sans-serif;color:#687085;margin:40vh auto 0;text-align:center">
+        Starting tunnel <b>${esc(t.name)}</b>…<br><small>${esc(t.open)}</small></p>`;
+    }
+  }
+  try {
+    if (!up) {
+      if (!ACTIVE.has(t.runtime?.status)) await api("POST", `/api/tunnels/${t.id}/start`);
+      await waitUntilUp(t.id, (err) => {
+        const note = tab?.document?.querySelector("small");
+        if (note && err) note.textContent = `Retrying: ${err.message}`;
+      });
+    }
+    if (tab) tab.location.href = t.open;
+    else if (web) window.open(t.open, "_blank", "noopener"); // tab was blocked: try once more
+    else await api("POST", `/api/tunnels/${t.id}/open`);
+  } catch (e) {
+    if (tab) tab.close();
+    const err = tunnelsById().get(t.id)?.runtime?.last_error;
+    toast("err", `${t.name}: ${err?.message || e.message}`, err?.hint || "", 8000);
+  }
+}
+
+function waitUntilUp(id, onRetry, timeout = 45) {
+  const deadline = now() + timeout;
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const rt = tunnelsById().get(id)?.runtime;
+      const st = rt?.status;
+      if (st === "up") return resolve();
+      if (st === "retrying" && onRetry) onRetry(rt.last_error);
+      if (st === "failed" || st === "stopped") return reject(new Error("the tunnel could not be started"));
+      if (now() > deadline) return reject(new Error("timed out waiting for the tunnel to connect"));
+      setTimeout(check, 150);
+    };
+    // give the state stream a moment to report the start
+    setTimeout(check, 300);
+  });
 }
 
 function startRename(id) {
@@ -666,14 +775,18 @@ function forwardRowHTML(f, i, total) {
     </div>`;
 }
 
-function draftFromTunnel(t) {
+function draftFromTunnel(t, mode = "edit") {
   if (!t) {
     return { id: null, name: "", host: "", user: "", port: "", identity_file: "", jump: "",
       forwards: [blankForward("L")], keep_alive: true, favorite: false, open_url: "", start: true };
   }
+  const dup = mode === "duplicate";
+  // a copy of an automatically named tunnel keeps an automatic name (it follows the new ports)
+  const name = dup ? (t.name === t.auto_name ? "" : `${t.name} copy`) : t.name;
   return {
-    id: t.id, name: t.name, host: t.host, user: t.user || "", port: t.port || "", identity_file: t.identity_file || "",
-    jump: t.jump || "", keep_alive: t.keep_alive, favorite: t.favorite, open_url: t.open_url || "", start: false,
+    id: dup ? null : t.id, source_id: t.id, name, host: t.host, user: t.user || "", port: t.port || "",
+    identity_file: t.identity_file || "", jump: t.jump || "", keep_alive: t.keep_alive, favorite: t.favorite,
+    open_url: t.open_url || "", start: false,
     forwards: t.forwards.map((f) => ({
       type: f.type, bind: f.bind || "", listen_port: f.listen_port, target_host: f.target_host || "",
       target_port: f.target_port || "", target_socket: f.target_socket || "", mode: f.target_socket ? "socket" : "tcp",
@@ -696,9 +809,11 @@ function draftPayload(d) {
   };
 }
 
-async function openEditor(t) {
-  const d = draftFromTunnel(t);
-  const editing = !!t;
+async function openEditor(t, mode = t ? "edit" : "new") {
+  const d = draftFromTunnel(t, mode);
+  const editing = mode === "edit";
+  const duplicating = mode === "duplicate";
+  const title = { new: "New tunnel", edit: "Edit tunnel", duplicate: "Duplicate tunnel" }[mode];
   if (!S.keys) S.keys = await api("GET", "/api/keys").catch(() => []);
   const hostOptions = S.hostList.map((h) => `<option value="${esc(h.alias)}">${esc([h.user, h.hostname].filter(Boolean).join("@"))}</option>`).join("");
   const keyOptions = [`<option value="">Default (ssh config / agent)</option>`]
@@ -708,8 +823,9 @@ async function openEditor(t) {
 
   showModal(`
     <form method="dialog" id="editor" autocomplete="off">
-      <div class="m-head"><h3>${editing ? "Edit tunnel" : "New tunnel"}</h3><button type="button" class="icon-btn" data-close data-tip="Close (Esc)"><span data-icon="x"></span></button></div>
+      <div class="m-head"><h3>${title}</h3><button type="button" class="icon-btn" data-close data-tip="Close (Esc)"><span data-icon="x"></span></button></div>
       <div class="m-body">
+        ${duplicating ? `<div class="callout info">${icon("copy-plus")}<div>Copy of <b>${esc(t.name)}</b>. Change what you need (usually the local port) and save; the original stays as it is.</div></div>` : ""}
         <div class="m-section">
           <h4>Connection</h4>
           <div class="grid2">
@@ -752,7 +868,7 @@ async function openEditor(t) {
       <div class="m-foot">
         <span class="spacer"></span>
         <button type="button" class="btn" data-close>Cancel</button>
-        <button type="submit" class="btn primary" id="save">${editing ? "Save" : "Create tunnel"}</button>
+        <button type="submit" class="btn primary" id="save">${{ new: "Create tunnel", edit: "Save", duplicate: "Create copy" }[mode]}</button>
       </div>
     </form>`);
 
@@ -798,11 +914,15 @@ async function openEditor(t) {
         save.disabled = true;
         return;
       }
-      save.disabled = false;
       form.name.placeholder = r.name;
       form.open_url.placeholder = r.open || "nothing to open";
+      // a copy that is still identical to an existing tunnel would just be merged into it
+      const sameAsExisting = duplicating && r.duplicate_of;
+      save.disabled = !!sameAsExisting;
+      const warnings = sameAsExisting ? [] : r.warnings;
       el.innerHTML = `<div class="cmd"><code>${esc(r.command)}</code></div>` +
-        (r.warnings.length ? `<div class="warn-list">${r.warnings.map((w) => `<div class="callout warn">${icon("triangle-alert")}<div>${esc(w)}</div></div>`).join("")}</div>` : "");
+        (sameAsExisting ? `<div class="callout err">${icon("triangle-alert")}<div>Still identical to “${esc(r.duplicate_of.name)}”. Change something (e.g. the local port, host or target) to create a copy.</div></div>` : "") +
+        (warnings.length ? `<div class="warn-list">${warnings.map((w) => `<div class="callout warn">${icon("triangle-alert")}<div>${esc(w)}</div></div>`).join("")}</div>` : "");
     } catch (e) {
       el.innerHTML = `<div class="callout err">${icon("triangle-alert")}<div>${esc(e.message)}</div></div>`;
     }
@@ -870,7 +990,7 @@ async function openEditor(t) {
         body.start = d.start;
         const r = await api("POST", "/api/tunnels", body);
         if (d.start) S.watch.set(r.id, now() + 20);
-        toast(r.created ? "ok" : "info", r.created ? `Created “${r.name}”` : `“${r.name}” already exists`,
+        toast(r.created ? "ok" : "info", r.created ? `${duplicating ? "Copied to" : "Created"} “${r.name}”` : `“${r.name}” already exists`,
           r.created ? (d.start ? "Connecting…" : "") : "The existing entry was reused.", 3000);
         flashRow(r.id);
       }
@@ -880,7 +1000,14 @@ async function openEditor(t) {
     }
   });
 
-  setTimeout(() => (editing ? form.name : form.host).focus(), 30);
+  setTimeout(() => {
+    if (duplicating) {
+      // jump straight to the local port: that's what usually changes in a copy
+      const port = rows.querySelector('[data-f="listen_port"]');
+      (port || form.name).focus();
+      port?.select();
+    } else (editing ? form.name : form.host).focus();
+  }, 30);
   sync();
 }
 
@@ -926,6 +1053,10 @@ async function openSettings() {
         <div class="m-section">
           <h4>SSH</h4>
           <div class="switch-row">
+            <div class="txt"><b>Show web app icons</b><small>When a tunnel to a web app is up, load its favicon through the tunnel (from that localhost port only) and show it in the list.</small></div>
+            <label class="switch"><input type="checkbox" id="set-favicons" ${s.fetch_favicons ? "checked" : ""}><span></span></label>
+          </div>
+          <div class="switch-row">
             <div class="txt"><b>Accept new host keys automatically</b><small>Uses <code>StrictHostKeyChecking=accept-new</code>: unknown hosts are trusted on first use, changed keys are still rejected.</small></div>
             <label class="switch"><input type="checkbox" id="set-acceptnew" ${s.accept_new_host_keys ? "checked" : ""}><span></span></label>
           </div>
@@ -959,6 +1090,7 @@ async function openSettings() {
     e.target.checked = notifyEnabled();
   };
   $("#set-acceptnew").onchange = (e) => saveSetting({ accept_new_host_keys: e.target.checked });
+  $("#set-favicons").onchange = (e) => saveSetting({ fetch_favicons: e.target.checked });
   const nums = { "set-sai": "server_alive_interval", "set-sac": "server_alive_count_max", "set-ct": "connect_timeout" };
   Object.entries(nums).forEach(([id, key]) => {
     $(`#${id}`).onchange = (e) => saveSetting({ [key]: Number(e.target.value) });
@@ -1071,7 +1203,7 @@ function init() {
   };
   $("#btn-notify").onclick = toggleNotifications;
   $("#btn-settings").onclick = openSettings;
-  $("#btn-new").onclick = () => openEditor(null);
+  $("#btn-new").onclick = () => openEditor(null, "new");
   $("#sort").onchange = (e) => {
     S.sort = e.target.value;
     store.set("tm-sort", S.sort);
@@ -1098,7 +1230,7 @@ function init() {
     const typing = e.target.closest("input, textarea, select, [contenteditable]");
     if (modal.open) return;
     if (e.key === "/" && !typing) { e.preventDefault(); $("#search").focus(); }
-    else if (e.key === "n" && !typing && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openEditor(null); }
+    else if (e.key === "n" && !typing && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openEditor(null, "new"); }
     else if (e.key === "Escape" && e.target === $("#search")) { $("#search").value = ""; S.query = ""; render(); $("#search").blur(); }
   });
 
