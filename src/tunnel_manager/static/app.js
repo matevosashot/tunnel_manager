@@ -410,6 +410,9 @@ function updateTimes() {
 // ------------------------------------------------------------------ live updates
 
 function applyState(st) {
+  // the manager was upgraded while this tab was open: load the new UI
+  if (S.version && st.version !== S.version) { location.reload(); return; }
+  S.version = st.version;
   S.state = st;
   handleEvents(st.events || []);
   // report failures of starts the user just clicked

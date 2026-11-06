@@ -102,3 +102,9 @@ def test_duplicate_flow(client):
     tunnels = {t["id"]: t for t in client.get("/api/state").json()["tunnels"]}
     assert tunnels[orig["id"]]["forwards"][0]["listen_port"] == 18080  # original untouched
     assert tunnels[copy["id"]]["favorite"] and tunnels[copy["id"]]["auto_name"] == "gpu :18081→80"
+
+
+def test_ui_files_are_revalidated(client):
+    for path in ("/", "/app.js", "/style.css", "/icons.js"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path

@@ -102,7 +102,12 @@ def create_app(
             origin = request.headers.get("origin")
             if request.headers.get("x-tunnel-manager") != "1" or (origin and origin not in allowed_origins):
                 return JSONResponse({"detail": "forbidden"}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        # the UI files change on every upgrade: make browsers revalidate them
+        # (cheap thanks to ETags) instead of running a stale cached copy
+        if not request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     # ------------------------------------------------------------ helpers
 
